@@ -1,0 +1,103 @@
+name: Android signed release
+on:
+  workflow_dispatch:
+    inputs:
+      version_code:
+        description: 'Unique Play version code; increase for each new uploaded release'
+        required: true
+        default: '1'
+        type: string
+      version_name:
+        description: 'Version shown to testers'
+        required: true
+        default: '1.0.0'
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: android-signed-release
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CHURP_VERSION_CODE: ${{ inputs.version_code }}
+      CHURP_VERSION_NAME: ${{ inputs.version_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Validate release version
+        run: |
+          node --input-type=module <<'NODE'
+          const code = process.env.CHURP_VERSION_CODE;
+          const name = process.env.CHURP_VERSION_NAME;
+          if (!/^[1-9][0-9]{0,9}$/.test(code) || Number(code) > 2100000000)
+            throw new Error('Version code must be an integer between 1 and 2100000000.');
+          if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9.-]+)?$/.test(name) || name.length > 50)
+            throw new Error('Use a version name such as 1.0.0 or 1.0.0-beta.1.');
+          NODE
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+      - run: npm ci --no-audit --no-fund
+      - name: Build native release assets
+        run: |
+          npm run build:native:release
+          npx cap sync android
+      - name: Build signed Android App Bundle
+        working-directory: android
+        env:
+          CHURP_REQUIRE_SIGNING: 'true'
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/churp-upload.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing GitHub Actions secret: $name"
+              exit 1
+            fi
+          done
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+          keytool -list -keystore "$ANDROID_KEYSTORE_PATH" -storepass:env ANDROID_KEYSTORE_PASSWORD -alias "$ANDROID_KEY_ALIAS" > /dev/null
+          ./gradlew bundleRelease --no-daemon --console=plain
+      - name: Verify bundle signature
+        run: |
+          jarsigner -J-Duser.language=en -J-Duser.country=US -verify android/app/build/outputs/bundle/release/app-release.aab > "$RUNNER_TEMP/churp-signature-check.txt"
+          if ! grep -q "jar verified." "$RUNNER_TEMP/churp-signature-check.txt"; then
+            echo "::error::The Android App Bundle signature could not be verified."
+            exit 1
+          fi
+      - name: Remove temporary signing key
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/churp-upload.jks"
+      - name: Save signed bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: Churp-Android-${{ inputs.version_code }}
+          path: android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 14
+      - name: Release instructions
+        run: |
+          {
+            echo '### Signed Android bundle ready'
+            echo "Version: $CHURP_VERSION_NAME ($CHURP_VERSION_CODE)"
+            echo 'Download the artifact below, unzip it, and upload app-release.aab to the draft internal testing release in Play Console.'
+            echo 'This workflow does not upload or publish to Google Play.'
+            echo 'The bundle uses https://app.churptree.com as its backend.'
+          } >> "$GITHUB_STEP_SUMMARY"
