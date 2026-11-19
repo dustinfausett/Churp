@@ -9,12 +9,13 @@ import { sealMessage, decryptMessages } from './encryption/client';
 import { POLL_LIMITS, validatePoll, parsePoll, validateAnswers, encodeVote, parseVote } from '../shared/polls';
 import './polls.css';
 import { parseRsvp } from '../shared/rsvps';
+import {parseDocument} from '../shared/documents';
 import { parseAssignments } from '../shared/assignments';
 
 import { activityArtwork as art } from './activityArtwork';
 import './activity-cards.css';
 const newQuestion = () => ({ text: '', type: 'single', options: ['', ''] });
-export const messagePreview = m => m?.message_kind === 'poll' ? parsePoll(m.body)?.title || 'Poll' : m?.message_kind === 'rsvp' ? parseRsvp(m.body)?.title || 'RSVP' : m?.message_kind === 'assignments' ? parseAssignments(m.body)?.title || 'Assignments' : m?.body;
+export const messagePreview = m => ['document','sheet'].includes(m?.message_kind) ? parseDocument(m.body)?.title || 'Shared item' : m?.message_kind === 'poll' ? parsePoll(m.body)?.title || 'Poll' : m?.message_kind === 'rsvp' ? parseRsvp(m.body)?.title || 'RSVP' : m?.message_kind === 'assignments' ? parseAssignments(m.body)?.title || 'Assignments' : m?.body;
 
 export function PollBuilder({ group, onClose, onSent, initialValue=null, scheduledRecord=null }) {
   const { enabled } = useEncryption();

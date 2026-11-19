@@ -133,7 +133,7 @@ export default function App() {
   const openCircle = id => {
     if(openingId || view.gid === id) return;
     cancelEntry();
-    const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduced=user.pet_animations===false || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const bird=document.querySelector('[data-bird-perch]')?.getBoundingClientRect();
     const token=++navigationToken.current;
     returnFocus.current=id; setOpeningId(id); setMobileNav(false);
