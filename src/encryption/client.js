@@ -2,6 +2,7 @@ import {backendFetch} from '../native/runtime';
 import {cleanMessageBody,birdWords} from '../../shared/bird-words.js';
 import {sealNotificationPreviews,previewProof} from '../../shared/notification-previews.js';
 import {validateReactions,reactionProof} from '../../shared/reactions.js';
+import {documentProof} from '../../shared/documents';
 import { assignmentProof } from '../../shared/assignments';
 import { api,post } from '../api';
 import * as enc from '../../shared/encryption.js';
@@ -345,3 +346,5 @@ export async function approvePrivateRequest(childId,peerId){
 
 // Share only this message's signed packet, never the account identity or history.
 export async function shareReportedMessage(message,publicKey){const self=getCurrent();if(!message.ciphertext||message.decryptionError)throw new Error('Unlock this message before reporting it.');return enc.rewrap([self.privateKey,...self.previousPrivateKeys],publicKey,message.ciphertext);}
+
+export async function signDocumentUpdate(request,id,expectedVersion){return {...request,expectedVersion,documentSignature:await enc.sign(getCurrent().privateKey,'document-update',documentProof({id,expectedVersion,clientId:request.clientId,cipherHash:await enc.digest(request.ciphertext)}))};}

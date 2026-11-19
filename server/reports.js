@@ -29,7 +29,7 @@ export function installReports({app,db,dataDir,encryption,encryptionRequired,fam
  function access(req,channel,id){
   if(!['nest','private'].includes(channel)||!Number.isSafeInteger(id)||id<1)fail(400,'Choose a valid message.');encryption.device(req);
   if(channel==='nest'){
-   const m=one("SELECT * FROM messages WHERE id=? AND deleted=0 AND message_kind IN ('chat','poll','rsvp','assignments')",id)||fail(404,'Message not found.'),g=visibleCircle(req.user.id,m.group_id);
+   const m=one("SELECT * FROM messages WHERE id=? AND deleted=0 AND message_kind IN ('chat','poll','rsvp','assignments','document','sheet')",id)||fail(404,'Message not found.'),g=visibleCircle(req.user.id,m.group_id);
    if(!joined(req.user.id,g.id)||(encryptionRequired&&!encryption.canRead(req.user.id,m)))fail(404,'Message not found.');
    return {m,source:m.ciphertext,signer:m.encrypted_by||m.user_id,trees:all('SELECT id,name FROM communities WHERE id=? AND archived_at IS NULL',g.community_id),location:g.name,treeName:one('SELECT name FROM communities WHERE id=?',g.community_id)?.name};
   }
@@ -67,6 +67,7 @@ export function installReports({app,db,dataDir,encryption,encryptionRequired,fam
    if(current.channel==='nest'){
     const m=one('SELECT * FROM messages WHERE id=?',current.message_id);
     if(m){run("UPDATE messages SET deleted=1,body='',ciphertext=NULL WHERE id=?",m.id);run('DELETE FROM message_reactions WHERE nest_message_id=?',m.id);run('DELETE FROM message_files WHERE message_id=?',m.id);run('DELETE FROM notifications WHERE message_id=?',m.id);
+     if(['document','sheet'].includes(m.message_kind)){run("UPDATE messages SET deleted=1,body='',ciphertext=NULL WHERE reply_to=? AND message_kind='document_update'",m.id);run('DELETE FROM shared_documents WHERE message_id=?',m.id);}
      const related={poll:['poll_vote','poll_votes','poll_id'],rsvp:['rsvp_response','rsvp_responses','event_id'],assignments:['assignment_op','assignment_lists','message_id']}[m.message_kind];
      if(related){run("UPDATE messages SET deleted=1,body='',ciphertext=NULL WHERE reply_to=? AND message_kind=?",m.id,related[0]);run(`DELETE FROM ${related[1]} WHERE ${related[2]}=?`,m.id);}
     }

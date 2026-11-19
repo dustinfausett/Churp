@@ -1,3 +1,6 @@
+import {DocumentCard,DocumentEditor} from './SharedDocuments';
+import {parseDocument} from '../shared/documents';
+import {extractLinks} from '../shared/links';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Download, File, FileText, Image as ImageIcon, Mail, Vote, ClipboardCheck, Music, Video } from 'lucide-react';
 import { Modal } from './components';
@@ -14,8 +17,10 @@ import { parseAssignments } from '../shared/assignments';
 import { activityArtwork } from './activityArtwork';
 
 const categories = [
+  {id:'links',label:'Links',Icon:FileText,always:true},
   { id: 'pictures', label: 'Pictures', Icon: ImageIcon, always: true },
-  { id: 'documents', label: 'Documents', Icon: FileText, always: true },
+  { id: 'documents', label: 'Documents', art:activityArtwork.document, Icon: FileText, always: true },
+  {id:'sheets',label:'Sheets',art:activityArtwork.sheet,Icon:FileText,always:true},
   { id: 'polls', art: activityArtwork.poll, label: 'Polls', Icon: Vote, always: true },
   { id: 'rsvps', art: activityArtwork.rsvp, label: 'RSVPs', Icon: Mail, always: true },
   { id: 'assignments', art: activityArtwork.assignments, label: 'Assignments', Icon: ClipboardCheck, always: true },
@@ -78,6 +83,7 @@ function DownloadRow({ item, getUrl }) {
 }
 
 export default function SharedLibrary({ conversationId, group, user, version, onClose, onOpenPoll, onOpenRsvp, onOpenAssignments, suspended = false }) {
+  const [document,setDocument]=useState(null);
   const { enabled } = useEncryption();
   const [items, setItems] = useState([]), [loading, setLoading] = useState(true), [error, setError] = useState(''), [unverified, setUnverified] = useState(0);
   const [category, setCategory] = useState(null), [picture, setPicture] = useState(null), [retry, setRetry] = useState(0);
@@ -110,6 +116,7 @@ export default function SharedLibrary({ conversationId, group, user, version, on
           if(message.removed||message.deleted)continue;
           if (message.decryptionError) { invalid++; continue; }
           const common = { message, messageId: message.id, createdAt: message.created_at, sender: message.user_id === user.id ? 'You' : message.name||group.name };
+          if(['document','sheet'].includes(message.message_kind) && parseDocument(message.body,message.message_kind))found.push({...common,id:`document:${message.id}`,category:message.message_kind==='sheet'?'sheets':'documents',editable:true,index:-1});
           if (message.message_kind === 'poll') {
             const poll = parsePoll(message.body);
             if (poll) found.push({ ...common, id: `poll:${message.id}`, category: 'polls', title: poll.title, index: -1 }); else invalid++;
@@ -122,6 +129,7 @@ export default function SharedLibrary({ conversationId, group, user, version, on
             const list = parseAssignments(message.body);
             if (list) found.push({ ...common, id: `assignments:${message.id}`, category: 'assignments', title: list.title, index: -1 }); else invalid++;
           }
+          if(!message.message_kind || message.message_kind==='chat')extractLinks(message.body).forEach((url,index)=>found.push({...common,id:`link:${message.id}:${index}`,category:'links',url,index}));
           message.files.forEach((file, index) => found.push({ ...common, id: `file:${file.id}`, category: fileCategory(file), file, index }));
         }
         more = (result.has_more||result.more) && !!(result.next_before||result.messages.length); before = result.next_before||result.messages[0]?.id;
@@ -138,6 +146,7 @@ export default function SharedLibrary({ conversationId, group, user, version, on
     if (category || picture) backButton.current?.focus(); else if (lastCategory.current) categoryButtons.current[lastCategory.current]?.focus();
   }, [category, picture, suspended]);
   if (suspended) return null;
+  if(document)return <DocumentEditor message={document} kind={document.message_kind} group={group} onClose={()=>setDocument(null)}/>;
   const activeCategory = categories.find(c => c.id === category), shown = items.filter(item => item.category === category);
   return <Modal title={picture ? picture.file.name : activeCategory ? activeCategory.label : conversationId?'Shared in this conversation':'Shared in this Nest'} subtitle={group.name} onClose={onClose} wide>
     <div className="shared-library">
@@ -145,10 +154,10 @@ export default function SharedLibrary({ conversationId, group, user, version, on
       {error && <div className="error-banner" role="alert">{error}<button className="text-button" type="button" onClick={() => setRetry(n => n + 1)}>Try again</button></div>}
       {loading && <p className="shared-loading" role="status">Loading shared items…</p>}
       {!!unverified && <p className="field-error" role="alert">Some shared items could not be decrypted or verified and aren’t shown.</p>}
-      {picture ? <PictureView item={picture} getUrl={getUrl} /> : !category ? <div className="shared-categories">{categories.filter(c => (!conversationId||!['polls','rsvps','assignments'].includes(c.id))&&(c.always || items.some(item => item.category === c.id))).map(({ id, label, Icon, art }) => <button key={id} type="button" ref={el => { categoryButtons.current[id] = el; }} onClick={() => { lastCategory.current = id; setCategory(id); }}><>{art ? <img className="shared-activity-art" src={art} alt="" width="48" height="48" /> : <Icon size={27} />}</><span>{label}</span>{!loading && <small>{items.filter(item => item.category === id).length}</small>}</button>)}</div> : <>
+      {picture ? <PictureView item={picture} getUrl={getUrl} /> : !category ? <div className="shared-categories">{categories.filter(c => (!conversationId||!['polls','rsvps','assignments','sheets'].includes(c.id))&&(c.always || items.some(item => item.category === c.id))).map(({ id, label, Icon, art }) => <button key={id} type="button" ref={el => { categoryButtons.current[id] = el; }} onClick={() => { lastCategory.current = id; setCategory(id); }}><>{art ? <img className="shared-activity-art" src={art} alt="" width="48" height="48" /> : <Icon size={27} />}</><span>{label}</span>{!loading && <small>{items.filter(item => item.category === id).length}</small>}</button>)}</div> : <>
         <p className="shared-sort">Newest first</p>
         {!loading && !shown.length && !error && <p className="shared-empty">No {activeCategory.label.toLowerCase()} have been shared with you in this conversation yet.</p>}
-        <div className={category === 'pictures' ? 'shared-pictures' : 'shared-items'}>{shown.map(item => category === 'pictures' ? <PictureTile key={item.id} item={item} getUrl={getUrl} onOpen={setPicture} /> : category === 'polls' ? <div className="shared-poll" key={item.id}><PollCard message={item.message} group={group} user={user} version={version} onOpen={onOpenPoll} /><p className="shared-item-meta">{item.sender} · {dateLabel(item.createdAt)}</p></div> : category === 'rsvps' ? <div className="shared-poll" key={item.id}><RsvpEnvelope message={item.message} group={group} user={user} version={version} onOpen={onOpenRsvp} /><p className="shared-item-meta">{item.sender} · {dateLabel(item.createdAt)}</p></div> : category === 'assignments' ? <div className="shared-poll" key={item.id}><AssignmentCard message={item.message} group={group} user={user} version={version} onOpen={onOpenAssignments} /><p className="shared-item-meta">{item.sender} · {dateLabel(item.createdAt)}</p></div> : <DownloadRow key={item.id} item={item} getUrl={getUrl} />)}</div>
+        <div className={category === 'pictures' ? 'shared-pictures' : 'shared-items'}>{shown.map(item => item.editable ? <DocumentCard key={item.id} message={item.message} group={group} onOpen={setDocument}/> : category === 'links' ? <div className="shared-download" key={item.id}><a href={item.url} target="_blank" rel="noopener noreferrer">{item.url}</a><p className="shared-item-meta">{item.sender} · {dateLabel(item.createdAt)}</p></div> : category === 'pictures' ? <PictureTile key={item.id} item={item} getUrl={getUrl} onOpen={setPicture} /> : category === 'polls' ? <div className="shared-poll" key={item.id}><PollCard message={item.message} group={group} user={user} version={version} onOpen={onOpenPoll} /><p className="shared-item-meta">{item.sender} · {dateLabel(item.createdAt)}</p></div> : category === 'rsvps' ? <div className="shared-poll" key={item.id}><RsvpEnvelope message={item.message} group={group} user={user} version={version} onOpen={onOpenRsvp} /><p className="shared-item-meta">{item.sender} · {dateLabel(item.createdAt)}</p></div> : category === 'assignments' ? <div className="shared-poll" key={item.id}><AssignmentCard message={item.message} group={group} user={user} version={version} onOpen={onOpenAssignments} /><p className="shared-item-meta">{item.sender} · {dateLabel(item.createdAt)}</p></div> : <DownloadRow key={item.id} item={item} getUrl={getUrl} />)}</div>
       </>}
     </div>
   </Modal>;

@@ -46,3 +46,6 @@
 @media(max-width:640px){.compact-home .community-banner{padding-top:12px;padding-bottom:12px}}
 
 .calendar-form .calendar-multiple-days{display:flex;align-items:center;gap:8px}.calendar-multiple-days input[type=checkbox]{width:18px;height:18px;margin:0;accent-color:#487132}.calendar-event-times{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+
+.calendar-grid button.calendar-today {background:#e7eddd;border:2px solid #4b632f;color:#344d24;font-weight:800;}
+.calendar-grid button.calendar-today > span {background:#4b632f;color:#fff;border-radius:50%;display:inline-grid;place-items:center;min-width:1.8em;min-height:1.8em;}

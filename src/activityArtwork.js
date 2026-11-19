@@ -1,6 +1,7 @@
 // One coordinated Churp illustration family for sharing, chat cards and choices.
 const root='/brand/activities/';
 export const activityArtwork={
+  document:`${root}document.png`,sheet:`${root}sheet.png`,
   poll:`${root}poll-ballot.png`,
   rsvp:`${root}rsvp-envelope.png`,
   rsvpOpen:`${root}rsvp-envelope-open.png`,

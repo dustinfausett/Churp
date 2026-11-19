@@ -241,6 +241,8 @@ export function openDatabase(path) {
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS users_recovery_email ON users(email) WHERE email IS NOT NULL;
     CREATE TABLE IF NOT EXISTS account_tokens (token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,kind TEXT NOT NULL CHECK(kind IN ('reset','verify')),email TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS account_tokens_user ON account_tokens(user_id,created_at);`);
+  db.exec(`CREATE TABLE IF NOT EXISTS shared_documents(message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,latest_id INTEGER NOT NULL REFERENCES messages(id),revision INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS document_revisions(update_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,document_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,revision INTEGER NOT NULL,UNIQUE(document_id,revision));`);
+  addColumn('users', 'pet_animations', 'INTEGER NOT NULL DEFAULT 1');
   addColumn('users', 'bird_id', "TEXT NOT NULL DEFAULT 'blue'");
   // Keep existing profile pictures. New accounts start with a Bluebird avatar.
   addColumn('users', 'avatar_style', "TEXT NOT NULL DEFAULT 'photo'");

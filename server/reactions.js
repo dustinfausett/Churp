@@ -10,7 +10,7 @@ export function installReactions({app,db,encryption,encryptionRequired,family,vi
  function access(req,channel,id,writing=false){
   if(!['nest','private'].includes(channel)||!Number.isSafeInteger(id)||id<1)fail(400,'Choose a valid message.');
   if(channel==='nest'){
-   const message=one("SELECT * FROM messages WHERE id=? AND deleted=0 AND message_kind IN ('chat','poll','rsvp','assignments')",id)||fail(404,'Message not found.');
+   const message=one("SELECT * FROM messages WHERE id=? AND deleted=0 AND message_kind IN ('chat','poll','rsvp','assignments','document','sheet')",id)||fail(404,'Message not found.');
    const g=visibleCircle(req.user.id,message.group_id);
    if(!joined(req.user.id,g.id)||(encryptionRequired&&!encryption.canRead(req.user.id,message)))fail(404,'Message not found.');
    return {message,g,can_react:true};

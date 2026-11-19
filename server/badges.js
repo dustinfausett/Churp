@@ -6,7 +6,7 @@ export function createBadges({db,family,encryptionRequired,smsUnread}){
    FROM group_members gm JOIN groups g ON g.id=gm.group_id
    JOIN community_members cm ON cm.community_id=g.community_id AND cm.user_id=gm.user_id
    LEFT JOIN (SELECT m.group_id,COUNT(*) AS n FROM messages m JOIN group_members mine ON mine.group_id=m.group_id AND mine.user_id=?
-    WHERE m.user_id<>? AND m.deleted=0 AND m.id>mine.last_read AND m.message_kind NOT IN ('poll_vote','rsvp_response','assignment_op')
+    WHERE m.user_id<>? AND m.deleted=0 AND m.id>mine.last_read AND m.message_kind NOT IN ('poll_vote','rsvp_response','assignment_op','document_update')
     ${encryptionRequired?"AND m.e2ee_version=1 AND m.id>mine.joined_after AND EXISTS(SELECT 1 FROM e2ee_recipients er WHERE er.message_id=m.id AND er.user_id=mine.user_id)":''}
     GROUP BY m.group_id) unread ON unread.group_id=gm.group_id
    WHERE gm.user_id=? AND gm.muted=0`).get(uid,uid,uid).n;
