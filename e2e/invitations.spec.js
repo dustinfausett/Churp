@@ -8,7 +8,7 @@ test('Nest member invitations arrive live, require acceptance and preserve priva
  const errors=[];page.on('pageerror',e=>errors.push(e.message));await register(page.context(),'Tree owner');
  const tree=(await(await page.request.post('/api/communities',{data:{name:'Invitation Tree'}})).json()).community;
  const treeInvite=await(await page.request.post('/api/invitations',{data:{community_id:tree.id}})).json();
- const nest=(await(await page.request.post(`/api/communities/${tree.id}/circles`,{data:{name:'Birthday surprise',private:true}})).json()).group;
+ const nest=(await(await page.request.post(`/api/communities/${tree.id}/circles`,{data:{name:'Birthday surprise',private:true,hide_history:true}})).json()).group;
  await page.goto('/');const origin=new URL(page.url()).origin;
  const context=await browser.newContext({...info.project.use,baseURL:origin}),other=await browser.newContext({...info.project.use,baseURL:origin});
  try{

@@ -133,7 +133,7 @@ export default function Chat({ community, group, user, version, onRefresh, onMod
   async function load() {
     const result = await readMessages(`/groups/${group.id}/messages`);
     setMessages(prev => { const merged = new Map(prev.map(m => [m.id,m])); for (const m of result.messages) merged.set(m.id,m); return [...merged.values()].sort((a,b) => a.id - b.id); });
-    if (first.current) setMore(result.has_more);
+    if (first.current || result.has_more && !more && messages.length < 100) setMore(result.has_more);
     setError(''); setLoading(false);
     const latest = result.messages.at(-1)?.id;
     if (group.joined && !result.messages.some(m=>m.decryptionError) && document.visibilityState === 'visible') { await patch(`/groups/${group.id}/membership`, { read_to: latest || 0 }); if (group.unread || group.marked_unread) await onRefresh(); }
@@ -142,7 +142,7 @@ export default function Chat({ community, group, user, version, onRefresh, onMod
   useEffect(() => {
     let active = true;
     if(enabled && !group.joined){setMessages([]);setLoading(false);setError('');return;}
-    (async () => { try { const result = await readMessages(`/groups/${group.id}/messages`); if (!active) return; setMessages(prev => { const merged = new Map(prev.map(m => [m.id,m])); result.messages.forEach(m => merged.set(m.id,m)); return [...merged.values()].sort((a,b) => a.id-b.id); }); if (first.current) setMore(result.has_more); setLoading(false); setError(''); if (group.joined && !result.messages.some(m=>m.decryptionError) && document.visibilityState === 'visible') { await patch(`/groups/${group.id}/membership`, { read_to: result.messages.at(-1)?.id || 0 }); if (group.unread || group.marked_unread) await onRefresh(); } } catch (err) { if (active) { setError(err.message); setLoading(false); } } })();
+    (async () => { try { const result = await readMessages(`/groups/${group.id}/messages`); if (!active) return; setMessages(prev => { const merged = new Map(prev.map(m => [m.id,m])); result.messages.forEach(m => merged.set(m.id,m)); return [...merged.values()].sort((a,b) => a.id-b.id); }); if (first.current || result.has_more && !more && messages.length < 100) setMore(result.has_more); setLoading(false); setError(''); if (group.joined && !result.messages.some(m=>m.decryptionError) && document.visibilityState === 'visible') { await patch(`/groups/${group.id}/membership`, { read_to: result.messages.at(-1)?.id || 0 }); if (group.unread || group.marked_unread) await onRefresh(); } } catch (err) { if (active) { setError(err.message); setLoading(false); } } })();
     return () => { active = false; };
   }, [group.id, version, group.joined]);
   useEffect(() => {
@@ -163,7 +163,7 @@ export default function Chat({ community, group, user, version, onRefresh, onMod
     try {
       const height = scroll.current.scrollHeight;
       const result = await readMessages(`/groups/${group.id}/messages?before=${messages[0].id}`);
-      setMessages(prev => [...result.messages, ...prev]); setMore(result.has_more);
+      setMessages(prev => [...result.messages.filter(m => !prev.some(existing => existing.id === m.id)), ...prev]); setMore(result.has_more);
       requestAnimationFrame(() => { if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight - height; });
     } catch (err) { notify(err.message, true); }
   }
@@ -176,7 +176,7 @@ export default function Chat({ community, group, user, version, onRefresh, onMod
     {searchOpen && <div className="chat-search"><Search size={17} /><input autoFocus value={search} onChange={e => setSearch(e.target.value)} placeholder="Search loaded messages or people…" aria-label="Search loaded messages" /><span>{search ? `${filtered.length} found` : 'Load earlier messages to search more'}</span><button className="icon-button" aria-label="Close search" onClick={() => { setSearchOpen(false); setSearch(''); }}><X size={17} /></button></div>}
     <div className="conversation" ref={scroll}>
       {enabled && group.joined && migration.pending>0 && <div className="encryption-history-note" role="status"><strong>Earlier history is awaiting encryption.</strong><p>{migration.error || 'Earlier server-stored history has not finished converting. Some readers may need to set up encrypted messaging. Retry to continue conversion and cleanup. New messages are encrypted.'}</p><button className="text-button" disabled={migration.busy} onClick={()=>setMigrationRetry(n=>n+1)}>{migration.busy ? 'Converting…' : 'Retry history conversion'}</button></div>}
-      {enabled && !group.joined && <div className="encryption-history-note">Join this Nest to receive messages from that point onward. Earlier messages are not shared with new members.</div>}
+      {enabled && !group.joined && <div className="encryption-history-note">{group.hide_history ? 'Join this Nest to receive messages from that point onward. Earlier messages are not shared with new members.' : 'Join this Nest to see its messages and shared chat history.'}</div>}
 
       {error && <div className="error-banner" role="alert">{error}<button className="text-button" onClick={() => load().catch(e => notify(e.message,true))}>Try again</button></div>}
       {loading ? <div className="loading-messages">Getting the conversation ready…</div> : <>

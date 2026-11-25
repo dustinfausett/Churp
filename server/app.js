@@ -1,3 +1,4 @@
+import { nestAudience } from './nest-history.js';
 import { installCalendars, verifyCalendarVault } from './calendars.js';
 import {installNativePush,nativePushProviders} from './native-push.js';
 import {installNativeAuth} from './native-auth.js';
@@ -230,7 +231,7 @@ export function createApp(options = {}) {
   const sms=installSms({app,db,dataDir,appUrl,transaction,refreshUser,testing:options.testing,config:smsConfig,transport:options.smsTransport,autoProcess:!(options.testing&&options.smsAutoProcess===false)});
   app.use('/api', auth);
   // Nest membership updates emit their own refresh only when preferences or read state change.
-  app.use('/api',(req,res,next)=>{if(!['GET','HEAD','OPTIONS'].includes(req.method)&&! /\/(?:read|presence)$/.test(req.path)&&!/^\/groups\/[^/]+\/membership$/.test(req.path))res.once('finish',()=>{if(res.statusCode<400)refreshUser(req.user.id);});next();});
+  app.use('/api',(req,res,next)=>{if(!['GET','HEAD','OPTIONS'].includes(req.method)&&! /\/(?:read|presence)$/.test(req.path)&&!/^\/(?:groups\/[^/]+\/membership|nest-history\/[^/]+)$/.test(req.path))res.once('finish',()=>{if(res.statusCode<400)refreshUser(req.user.id);});next();});
   app.use('/api',(req,res,next)=>{
     const setup=req.path==='/native-push/subscribe'&&req.method==='DELETE'||req.path==='/me'||/^\/me\/deletion(?:\/|$)/.test(req.path)||req.path==='/badges'||req.path==='/events'||req.path==='/sync'||/^\/family(?:\/|$)/.test(req.path)||(/^\/e2ee\//.test(req.path)&&!/^\/e2ee\/(?:uploads|legacy)(?:\/|$)/.test(req.path));
     if(setup)return next();
@@ -423,9 +424,10 @@ export function createApp(options = {}) {
     const pic = req.body.avatar_id === undefined || req.body.avatar_id === entity.avatar_id ? entity.avatar_id : avatar(req.user.id, req.body.avatar_id);
     const branchApproval = type === 'community' ? boolean(req.body.branch_approval_required === undefined ? !!entity.branch_approval_required : req.body.branch_approval_required, 'Branch approval') : null;
     const nestApproval = type === 'community' ? boolean(req.body.nest_approval_required === undefined ? !!entity.nest_approval_required : req.body.nest_approval_required, 'Nest approval') : null;
-    let priv, adminOnly;
+    let priv, adminOnly, hideHistory;
     if (type === 'group') {
       priv = req.body.private === undefined ? entity.private : boolean(req.body.private, 'Private');
+      hideHistory = req.body.hide_history === undefined ? entity.hide_history : boolean(req.body.hide_history, 'Hide previous messages');
       adminOnly = req.body.admin_only === undefined ? entity.admin_only : boolean(req.body.admin_only, 'Admin-only posting');
     }
     let parentId = entity.subcommunity_id;
@@ -436,7 +438,10 @@ export function createApp(options = {}) {
     }
     transaction(() => {
       run(`UPDATE ${table} SET name=?,description=?,avatar_id=? WHERE id=?`, name, desc, pic, entity.id);
-      if (type === 'group') run('UPDATE groups SET private=?,admin_only=?,subcommunity_id=? WHERE id=?', priv, adminOnly, parentId, entity.id);
+      if (type === 'group') {
+        run('UPDATE groups SET private=?,admin_only=?,hide_history=?,subcommunity_id=? WHERE id=?', priv, adminOnly, hideHistory, parentId, entity.id);
+        if (entity.hide_history && !hideHistory) run('UPDATE group_members SET share_history=1 WHERE group_id=?',entity.id);
+      }
       if (type === 'community') run('UPDATE communities SET branch_approval_required=?,nest_approval_required=? WHERE id=?',branchApproval,nestApproval,entity.id);
     });
     refresh(type === 'community' ? entity.id : entity.community_id);
@@ -513,8 +518,8 @@ export function createApp(options = {}) {
       run('INSERT INTO subcommunities(id,community_id,name,description,avatar_id) VALUES (?,?,?,?,?)',id,cid,draft.name,draft.description,draft.avatar_id);
       run('INSERT INTO collection_members VALUES (?,?)',id,creatorId);
     } else {
-      run('INSERT INTO groups(id,community_id,subcommunity_id,name,description,avatar_id,private,admin_only) VALUES (?,?,?,?,?,?,?,?)',
-        id,cid,parentId,draft.name,draft.description,draft.avatar_id,draft.private,draft.admin_only);
+      run('INSERT INTO groups(id,community_id,subcommunity_id,name,description,avatar_id,private,admin_only,hide_history) VALUES (?,?,?,?,?,?,?,?,?)',
+        id,cid,parentId,draft.name,draft.description,draft.avatar_id,draft.private,draft.admin_only,draft.hide_history ?? 1);
       run('INSERT INTO group_members(group_id,user_id) VALUES (?,?)',id,creatorId);
       if (parentId) run('INSERT OR IGNORE INTO collection_members VALUES (?,?)',parentId,creatorId);
     }
@@ -526,7 +531,7 @@ export function createApp(options = {}) {
     const c=community(cid); membership(req.user.id,cid);
     if (parentId !== null && (typeof parentId !== 'string' || sub(parentId).community_id !== cid)) fail(400,'Choose a Branch in this Tree.');
     const draft={ name:text(req.body.name,kind === 'branch' ? 'Branch name' : 'Nest name'), description:description(req.body.description), avatar_id:avatar(req.user.id,req.body.avatar_id ?? null) };
-    if (kind === 'nest') Object.assign(draft,{private:boolean(req.body.private ?? false,'Private'),admin_only:boolean(req.body.admin_only ?? false,'Admin-only posting')});
+    if (kind === 'nest') Object.assign(draft,{private:boolean(req.body.private ?? false,'Private'),admin_only:boolean(req.body.admin_only ?? false,'Admin-only posting'),hide_history:boolean(req.body.hide_history ?? false,'Hide previous messages')});
     const admin=canReview(req.user.id,{community_id:cid,kind,parent_id:parentId});
     if (!admin && (kind === 'branch' ? c.branch_approval_required : c.nest_approval_required)) {
       const payload=JSON.stringify(draft);
@@ -700,38 +705,55 @@ export function createApp(options = {}) {
     if (changed) refreshUser(req.user.id);
     res.json({ ok: true });
   });
-  function messagePage(req, sharedOnly = false) {
-    visibleCircle(req.user.id, req.params.id);
+  async function messagePage(req, sharedOnly = false) {
+    const g = visibleCircle(req.user.id, req.params.id);
     if(sharedOnly && !joined(req.user.id,req.params.id))fail(403,'Join this Nest to view shared items.');
     const before = req.query.before === undefined ? Number.MAX_SAFE_INTEGER : Number(req.query.before);
     if (!Number.isSafeInteger(before) || before < 1) fail(400, 'Invalid message cursor.');
-    const floor=encryptionRequired ? encryption.reader(req,req.params.id).gm.joined_after : -1;
-    const messages = all(`SELECT m.*,u.name,u.avatar_id,u.bird_id,u.avatar_choice,u.avatar_style,${encryptionRequired ? "''" : 'p.body'} AS parent_body,${encryptionRequired ? 'NULL' : 'pu.name'} AS parent_name,
+    const gm = encryptionRequired ? encryption.reader(req,g.id).gm : joined(req.user.id,g.id);
+    if (!encryptionRequired && g.hide_history && !gm) return {messages:[],has_more:false};
+    if (encryptionRequired && gm.share_history) {
+      await encryption.nestHistory.shareManaged(g.id,req.user.id,before);
+      encryption.reader(req,g.id);
+    }
+    const floor = !encryptionRequired && gm && !gm.share_history ? gm.joined_after : -1;
+    const messages = all(`SELECT m.*,${encryptionRequired ? 'CASE WHEN m.deleted=0 THEN COALESCE(hg.ciphertext,m.ciphertext) END AS ciphertext,' : ''}u.name,u.avatar_id,u.bird_id,u.avatar_choice,u.avatar_style,${encryptionRequired ? "''" : 'CASE WHEN p.id>COALESCE(?,0) THEN p.body END'} AS parent_body,${encryptionRequired ? 'NULL' : 'CASE WHEN p.id>COALESCE(?,0) THEN pu.name END'} AS parent_name,
       COALESCE(kh.public_key,ei.public_key) AS signer_key,COALESCE(m.signer_fingerprint,ei.fingerprint) AS signer_fingerprint,signer.name AS signer_name FROM messages m JOIN users u ON u.id=m.user_id
       LEFT JOIN e2ee_identities ei ON ei.user_id=m.encrypted_by LEFT JOIN e2ee_key_history kh ON kh.user_id=m.encrypted_by AND kh.fingerprint=m.signer_fingerprint LEFT JOIN users signer ON signer.id=m.encrypted_by
       LEFT JOIN messages p ON p.id=m.reply_to LEFT JOIN users pu ON pu.id=p.user_id
+      ${encryptionRequired ? `JOIN group_members gm ON gm.group_id=m.group_id AND gm.user_id=?
+        LEFT JOIN nest_history_grants hg ON hg.message_id=m.id AND hg.user_id=gm.user_id AND hg.edit_version=m.edit_version` : ''}
       WHERE m.group_id=? AND m.id<? AND m.id>? AND m.message_kind NOT IN ('poll_vote','rsvp_response','assignment_op','document_update')
       ${sharedOnly ? 'AND m.deleted=0' : ''}
-      ${encryptionRequired ? 'AND m.e2ee_version=1 AND EXISTS(SELECT 1 FROM e2ee_recipients er WHERE er.message_id=m.id AND er.user_id=?)' : ''}
-      ORDER BY m.id DESC LIMIT 100`, req.params.id, before,floor,...(encryptionRequired ? [req.user.id] : [])).reverse();
+      ${encryptionRequired ? 'AND m.e2ee_version=1 AND ' + nestAudience('m','gm') : ''}
+      ORDER BY m.id DESC LIMIT 100`, ...(encryptionRequired ? [req.user.id] : [floor,floor]), g.id,before,floor).reverse();
     for (const m of messages) m.files = all('SELECT f.id,f.name,f.mime,f.size FROM files f JOIN message_files mf ON mf.file_id=f.id WHERE mf.message_id=?', m.id);
     return { messages, has_more: messages.length === 100 };
   }
-  app.get('/api/groups/:id/messages', (req, res) => res.json(messagePage(req)));
-  app.get('/api/groups/:id/shared', (req, res) => res.json(messagePage(req, true)));
+  app.get('/api/groups/:id/messages', async (req, res) => res.json(await messagePage(req)));
+  app.get('/api/groups/:id/shared', async (req, res) => res.json(await messagePage(req, true)));
   app.get('/api/groups/:id/members',(req,res)=>{
     const g=visibleCircle(req.user.id,req.params.id);if(!joined(req.user.id,g.id)&&!groupAdmin(req.user.id,g))fail(403,'Join this Nest to see its members.');
     res.json({members:all(`SELECT u.id,u.name,u.username,u.avatar_id,u.avatar_choice,u.avatar_style,cm.role FROM group_members gm JOIN users u ON u.id=gm.user_id JOIN community_members cm ON cm.user_id=u.id AND cm.community_id=? WHERE gm.group_id=? ORDER BY u.name COLLATE NOCASE,u.id`,g.community_id,g.id)});
   });
-  app.get('/api/groups/:id/threads/:messageId', (req, res) => {
-    visibleCircle(req.user.id, req.params.id);
+  app.get('/api/groups/:id/threads/:messageId', async (req, res) => {
+    const g = visibleCircle(req.user.id, req.params.id);
     const root = one('SELECT * FROM messages WHERE id=? AND group_id=?', req.params.messageId, req.params.id) || fail(404, 'Thread not found.');
     if(['poll_vote','rsvp_response','assignment_op','document_update'].includes(root.message_kind))fail(404,'Thread not found.');
     const rootId = root.reply_to || root.id;
-    const floor=encryptionRequired ? encryption.reader(req,req.params.id).gm.joined_after : -1;
-    const messages = all(`SELECT m.*,u.name,u.avatar_id,u.bird_id,u.avatar_choice,u.avatar_style,COALESCE(kh.public_key,ei.public_key) AS signer_key,COALESCE(m.signer_fingerprint,ei.fingerprint) AS signer_fingerprint,signer.name AS signer_name FROM messages m JOIN users u ON u.id=m.user_id
-      LEFT JOIN e2ee_identities ei ON ei.user_id=m.encrypted_by LEFT JOIN e2ee_key_history kh ON kh.user_id=m.encrypted_by AND kh.fingerprint=m.signer_fingerprint LEFT JOIN users signer ON signer.id=m.encrypted_by WHERE m.group_id=? AND (m.id=? OR m.reply_to=?) AND m.id>?
-      AND m.message_kind NOT IN ('poll_vote','rsvp_response','assignment_op','document_update') ${encryptionRequired ? 'AND m.e2ee_version=1 AND EXISTS(SELECT 1 FROM e2ee_recipients er WHERE er.message_id=m.id AND er.user_id=?)' : ''} ORDER BY m.id LIMIT 500`, req.params.id, rootId, rootId,floor,...(encryptionRequired ? [req.user.id] : []));
+    const gm = encryptionRequired ? encryption.reader(req,g.id).gm : joined(req.user.id,g.id);
+    if (!encryptionRequired && g.hide_history && !gm) return res.json({messages:[]});
+    if (encryptionRequired && gm.share_history) {
+      await encryption.nestHistory.shareManaged(g.id,req.user.id,Number.MAX_SAFE_INTEGER,rootId);
+      encryption.reader(req,g.id);
+    }
+    const floor = !encryptionRequired && gm && !gm.share_history ? gm.joined_after : -1;
+    const messages = all(`SELECT m.*,${encryptionRequired ? 'CASE WHEN m.deleted=0 THEN COALESCE(hg.ciphertext,m.ciphertext) END AS ciphertext,' : ''}u.name,u.avatar_id,u.bird_id,u.avatar_choice,u.avatar_style,COALESCE(kh.public_key,ei.public_key) AS signer_key,COALESCE(m.signer_fingerprint,ei.fingerprint) AS signer_fingerprint,signer.name AS signer_name FROM messages m JOIN users u ON u.id=m.user_id
+      LEFT JOIN e2ee_identities ei ON ei.user_id=m.encrypted_by LEFT JOIN e2ee_key_history kh ON kh.user_id=m.encrypted_by AND kh.fingerprint=m.signer_fingerprint LEFT JOIN users signer ON signer.id=m.encrypted_by
+      ${encryptionRequired ? `JOIN group_members gm ON gm.group_id=m.group_id AND gm.user_id=?
+        LEFT JOIN nest_history_grants hg ON hg.message_id=m.id AND hg.user_id=gm.user_id AND hg.edit_version=m.edit_version` : ''}
+      WHERE m.group_id=? AND (m.id=? OR m.reply_to=?) AND m.id>?
+      AND m.message_kind NOT IN ('poll_vote','rsvp_response','assignment_op','document_update') ${encryptionRequired ? 'AND m.e2ee_version=1 AND ' + nestAudience('m','gm') : ''} ORDER BY m.id LIMIT 500`, ...(encryptionRequired ? [req.user.id] : []), g.id,rootId,rootId,floor);
     for (const m of messages) m.files = all('SELECT f.id,f.name,f.mime,f.size FROM files f JOIN message_files mf ON mf.file_id=f.id WHERE mf.message_id=?', m.id);
     res.json({ messages });
   });
@@ -765,7 +787,7 @@ export function createApp(options = {}) {
       if (!Number.isSafeInteger(reply)) fail(400, 'Invalid reply.');
       const parent = one('SELECT * FROM messages WHERE id=? AND group_id=?', reply, g.id);
       if (!parent || parent.deleted || ['poll_vote','rsvp_response','assignment_op','document_update'].includes(parent.message_kind)) fail(400, 'That message is no longer available to reply to.');
-      if(encryptionRequired && !encryption.canRead(req.user.id,parent))fail(404,'You cannot reply to a message from before you joined.');
+      if(encryptionRequired && !encryption.canRead(req.user.id,parent))fail(404,'You can only reply to a message you can read.');
       if(encryptionRequired && parent.reply_to)fail(400,'Reply to the visible root message of this thread.');
       reply = parent.reply_to || parent.id;
     }
@@ -893,7 +915,7 @@ export function createApp(options = {}) {
     let allowed = f.user_id === req.user.id;
     const privateAttached=!!one('SELECT 1 FROM private_message_files WHERE file_id=?',f.id),references=all('SELECT m.* FROM message_files mf JOIN messages m ON m.id=mf.message_id WHERE mf.file_id=? AND m.deleted=0',f.id);
     if(privateAttached||references.length)allowed=false;
-    for(const attached of references){try{visibleCircle(req.user.id,attached.group_id);if(encryptionRequired?!!f.encrypted&&encryption.canRead(req.user.id,attached):true)allowed=true;}catch{}}
+    for(const attached of references){try{const nest=visibleCircle(req.user.id,attached.group_id);if(encryptionRequired?!!f.encrypted&&encryption.canRead(req.user.id,attached):(joined(req.user.id,nest.id)?.share_history || !nest.hide_history || attached.id>(joined(req.user.id,nest.id)?.joined_after ?? Infinity)))allowed=true;}catch{}}
     if(!allowed&&f.encrypted&&privateMessages.canReadFile(req.user.id,f.id))allowed=true;
     if (!allowed && one('SELECT 1 FROM users WHERE avatar_id=?', f.id)) allowed = true;
     if (!allowed) for (const c of all('SELECT id FROM communities WHERE avatar_id=?', f.id)) if (one('SELECT 1 FROM community_members WHERE community_id=? AND user_id=?', c.id, req.user.id)) allowed = true;

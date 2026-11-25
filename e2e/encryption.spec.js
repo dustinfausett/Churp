@@ -16,7 +16,7 @@ async function setup(page){
   await page.getByRole('button',{name:'Enable self-managed encryption',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);await expect(page.getByRole('button',{name:'Edit your profile',exact:true})).toBeVisible();await expect(page.locator('.recovery-card')).toHaveCount(0);return recovery;
 }
 async function makeTree(context){const tree=(await (await context.request.post('/api/communities',{data:{name:'Private family Tree'}})).json()).community;
-  const nest=(await (await context.request.post(`/api/communities/${tree.id}/circles`,{data:{name:'Family chat'}})).json()).group;
+  const nest=(await (await context.request.post(`/api/communities/${tree.id}/circles`,{data:{name:'Family chat',hide_history:true}})).json()).group;
   const invite=(await (await context.request.post('/api/invitations',{data:{community_id:tree.id}})).json()).path.split('invite=')[1];return {tree,nest,invite};}
 const openNest=async page=>{await page.getByRole('button',{name:'Open Nest Family chat',exact:true}).click();await expect(page.locator('.chat-heading h1')).toHaveText('Family chat');};
 async function send(page,text){await page.getByRole('textbox',{name:'Write a message',exact:true}).fill(text);await page.getByRole('button',{name:'Send message',exact:true}).click();await expect(page.locator('.message-bubble').filter({hasText:text})).toBeVisible();}
@@ -160,4 +160,41 @@ test('managed sign-in is automatic; shields follow member custody and preserve e
     expect(records.map(m=>m.self_encrypted)).toEqual([0,1,0,1]);
     await page.screenshot({path:info.outputPath('automatic-nest-shield.png'),fullPage:true});
   }finally{await other.close();await third.close();}
+});
+
+test('unchecking hidden history reveals self-managed chat to a member already in the Nest', async ({page,browser}, info) => {
+  await register(page.context(),'History owner');
+  await setup(page);
+  const {nest,invite} = await makeTree(page.context());
+  await page.reload();
+  await openNest(page);
+  await send(page,'A message from before joining');
+
+  const context = await browser.newContext({...info.project.use,baseURL:'http://127.0.0.1:3101'});
+  try {
+    await register(context,'New member');
+    const member = await context.newPage();
+    await setup(member);
+    expect((await context.request.post('/api/invitations/accept',{data:{token:invite}})).ok()).toBeTruthy();
+    await member.reload();
+    await openNest(member);
+    await member.getByRole('button',{name:'Join Nest',exact:true}).click();
+    await expect(member.getByRole('textbox',{name:'Write a message',exact:true})).toBeVisible();
+    await expect(member.getByText('A message from before joining',{exact:true})).toHaveCount(0);
+
+    await page.getByRole('button',{name:'Nest information',exact:true}).click();
+    await page.getByRole('button',{name:'Nest settings',exact:true}).click();
+    const dialog = page.getByRole('dialog');
+    const setting = dialog.getByRole('checkbox',{name:'Hide previous messages from new members'});
+    await expect(setting).toBeChecked();
+    await dialog.getByText('Hide previous messages from new members',{exact:true}).click();
+    await expect(setting).not.toBeChecked();
+    await dialog.getByRole('button',{name:'Save changes',exact:true}).click();
+
+    await expect(member.getByText('A message from before joining',{exact:true})).toBeVisible({timeout:20000});
+    const messages = await (await context.request.get(`/api/groups/${nest.id}/messages`)).json();
+    expect(messages.messages[0].self_encrypted).toBe(1);
+  } finally {
+    await context.close();
+  }
 });

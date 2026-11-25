@@ -8,7 +8,9 @@ New accounts and previously unenrolled accounts get Churp-managed keys automatic
 
 Accounts that already had self-managed keys keep them. The upgrade never uploads their private keys to the managed vault or silently resets them. A returning approved device unlocks automatically; a replacement browser still requires recovery or approved-device transfer. If neither remains, Churp cannot unlock that self-managed account.
 
-Public Nests can be discovered by Tree members, but joining is required to read future messages. New members cannot read earlier messages. Leaving and rejoining starts a new history boundary. Admin powers do not override it. Muting controls notifications and does not change recipient membership.
+Joining a Nest is required to read its chat. New Nests share earlier chat, including replies and attachments, by default. **Hide previous messages from new members** starts new members at their join boundary. Existing Nests retain their previous policy until an admin changes it. Unchecking the setting includes every current member. Checking it again applies to future joins, including rejoining after leaving. Shared activity cards such as polls and documents keep their original audiences.
+
+Churp can share signed chat history when a current reader’s corresponding key is in the managed vault. Otherwise an approved device that can read the message securely rewraps it for the new member when it comes online. Copies keep the original signed contents and include access to their attachments. Sharing with a member who uses Churp-managed keys lets Churp recover their copy. Muting controls notifications and does not change access.
 
 ## Optional self-managed keys
 

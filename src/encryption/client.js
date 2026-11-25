@@ -248,6 +248,36 @@ export function convertHistory(groupId){
     return {converted,pending:1};
   })().finally(()=>migrations.delete(key));migrations.set(key,work);return work;
 }
+const historySyncs = new Map();
+export function shareNestHistory(active) {
+  const self = getCurrent();
+  if (historySyncs.has(self.userId)) return historySyncs.get(self.userId);
+  const work = (async () => {
+    let cursor = '';
+    while (active() && getCurrent() === self) {
+      const {tasks} = await api(`/nest-history${cursor}`);
+      if (!tasks.length) return;
+      for (const task of tasks) {
+        if (!active() || getCurrent() !== self) return;
+        try {
+          const recipient = await trustedReader({...task,id:task.recipient_id});
+          const ciphertext = await enc.rewrap([self.privateKey,...self.previousPrivateKeys], recipient.public_key, task.ciphertext);
+          const payload = {messageId:task.id,recipientId:task.recipient_id,joinToken:task.join_token,
+            editVersion:task.edit_version,fingerprint:task.fingerprint,cipherHash:await enc.digest(ciphertext)};
+          const signature = await enc.sign(self.privateKey,'nest-history',payload);
+          if (!active() || getCurrent() !== self) return;
+          await post(`/nest-history/${task.id}`, {...payload,ciphertext,signature});
+        } catch {
+          // Another device may still have the key for this message.
+        }
+      }
+      const last = tasks.at(-1);
+      cursor = `?after=${last.id}&recipient=${encodeURIComponent(last.recipient_id)}`;
+    }
+  })().finally(() => historySyncs.delete(self.userId));
+  historySyncs.set(self.userId, work);
+  return work;
+}
 export function clearMemory(){current=null;decryptedCache.clear();setEncryptionDevice(null);}
 export async function stageRecovery(){const self=getCurrent(),secret=enc.randomSecret(),backup=await enc.protectPrivate(self.privateKey,secret);return {code:`CHURP1-${formatCode(secret)}`,backup,signature:await enc.sign(self.privateKey,'backup',{userId:self.userId,backupHash:await enc.digest(backup)})};}
 export async function replaceRecovery(candidate){await api('/e2ee/backup',{method:'PUT',body:{backup:candidate.backup,signature:candidate.signature}});}

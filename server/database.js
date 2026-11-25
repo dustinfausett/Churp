@@ -102,6 +102,7 @@ export function openDatabase(path) {
   const addColumn = (table, name, definition) => {
     if (!db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
   };
+  addColumn('groups', 'hide_history', 'INTEGER NOT NULL DEFAULT 1 CHECK(hide_history IN (0,1))');
   addColumn('group_members', 'pin_position', 'INTEGER');
   addColumn('group_members', 'marked_unread', 'INTEGER NOT NULL DEFAULT 0');
   addColumn('messages', 'urgent', 'INTEGER NOT NULL DEFAULT 0');
@@ -177,6 +178,7 @@ export function openDatabase(path) {
   addColumn('files', 'encrypted', 'INTEGER NOT NULL DEFAULT 0');
   addColumn('group_members', 'joined_after', 'INTEGER NOT NULL DEFAULT 0');
   addColumn('group_members', 'join_token', 'TEXT');
+  addColumn('group_members', 'share_history', 'INTEGER NOT NULL DEFAULT 0');
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS messages_client_id ON messages(client_id) WHERE client_id IS NOT NULL;
     CREATE TABLE IF NOT EXISTS e2ee_meta (key TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -202,7 +204,33 @@ export function openDatabase(path) {
       message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,PRIMARY KEY(message_id,user_id)
     );
+    CREATE TABLE IF NOT EXISTS nest_history_grants (
+      message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      group_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      edit_version INTEGER NOT NULL,
+      ciphertext TEXT NOT NULL,
+      PRIMARY KEY(message_id,user_id),
+      FOREIGN KEY(group_id,user_id) REFERENCES group_members(group_id,user_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS nest_history_grants_member ON nest_history_grants(group_id,user_id);
+    CREATE TRIGGER IF NOT EXISTS clear_superseded_nest_history AFTER UPDATE OF edit_version,deleted ON messages
+      WHEN NEW.edit_version<>OLD.edit_version OR NEW.deleted<>OLD.deleted
+      BEGIN
+        UPDATE nest_history_grants SET ciphertext='' WHERE message_id=NEW.id;
+      END;
     CREATE TABLE IF NOT EXISTS e2ee_plaintext_cleanup (disk_name TEXT PRIMARY KEY);
+    CREATE TRIGGER IF NOT EXISTS nest_history_on_join AFTER INSERT ON group_members
+      WHEN EXISTS(SELECT 1 FROM groups WHERE id=NEW.group_id AND hide_history=0)
+      BEGIN
+        UPDATE group_members SET share_history=1 WHERE group_id=NEW.group_id AND user_id=NEW.user_id;
+      END;
+    CREATE TRIGGER IF NOT EXISTS nest_plaintext_join_floor AFTER INSERT ON group_members
+      WHEN NOT EXISTS(SELECT 1 FROM e2ee_meta WHERE key='active' AND value='1')
+      BEGIN
+        UPDATE group_members SET joined_after=COALESCE((SELECT MAX(id) FROM messages WHERE group_id=NEW.group_id),0)
+          WHERE group_id=NEW.group_id AND user_id=NEW.user_id;
+      END;
     CREATE TRIGGER IF NOT EXISTS e2ee_join_floor AFTER INSERT ON group_members
       WHEN EXISTS(SELECT 1 FROM e2ee_meta WHERE key='active' AND value='1')
       BEGIN

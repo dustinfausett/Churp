@@ -9,6 +9,7 @@ export function SpaceDialog({ modal, community, onClose, onSave, onDelete }) {
   const [avatarId, setAvatarId] = useState(entity?.avatar_id || null);
   const [deleting,setDeleting]=useState(!!modal.delete);
   const [privateCircle, setPrivate] = useState(!!entity?.private);
+  const [hideHistory, setHideHistory] = useState(!!entity?.hide_history);
   const [adminOnly, setAdminOnly] = useState(!!entity?.admin_only);
   const [branchApproval, setBranchApproval] = useState(!!(entity?.branch_approval_required ?? true));
   const [nestApproval, setNestApproval] = useState(!!(entity?.nest_approval_required ?? true));
@@ -22,7 +23,7 @@ export function SpaceDialog({ modal, community, onClose, onSave, onDelete }) {
     <Form submit={editing ? 'Save changes' : needsApproval ? 'Submit for Approval' : `Create ${label}`} onSubmit={async form => {
       const payload = { name: form.get('name'), description: form.get('description'), avatar_id: avatarId };
       if (type === 'community' && editing) Object.assign(payload,{branch_approval_required:branchApproval,nest_approval_required:nestApproval});
-      if (type === 'group') Object.assign(payload, { private: privateCircle, admin_only: adminOnly, subcommunity_id: location || null });
+      if (type === 'group') Object.assign(payload, { private: privateCircle, admin_only: adminOnly, hide_history: hideHistory, subcommunity_id: location || null });
       let result;
       if (editing) { payload.avatar_id = avatarId; result = await patch(`/${type === 'community' ? 'communities' : type === 'subcommunity' ? 'subcommunities' : 'groups'}/${entity.id}`, payload); }
       else {
@@ -47,6 +48,7 @@ export function SpaceDialog({ modal, community, onClose, onSave, onDelete }) {
       </div>}
       {type === 'group' && <div className="settings-section"><h4>Make it your own</h4>
         <Toggle label="Private Nest" description="Only admins can invite people. Hidden from everyone else." checked={privateCircle} onChange={setPrivate} />
+        <Toggle label="Hide previous messages from new members" description="Leave unchecked to share earlier chat with everyone in this Nest. Some encrypted history becomes available when a device that can read it comes online." checked={hideHistory} onChange={setHideHistory} />
         <Toggle label="Only admins can post" description="Members can read. Only admins can send messages or replies." checked={adminOnly} onChange={setAdminOnly} />
       </div>}
     </Form>

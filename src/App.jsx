@@ -20,6 +20,7 @@ import Contacts,{NavigationArt} from './Contacts';
 import PrivateMessages from './PrivateMessages';
 import {clearScheduleRequests} from './scheduled-client';
 import './personal.css';
+import NestHistorySync from './encryption/NestHistorySync';
 import EncryptionGate from './encryption/EncryptionGate';
 import PrivacyShield from './encryption/PrivacyShield';
 import { forget as forgetEncryption } from './encryption/client';
@@ -170,7 +171,7 @@ export default function App() {
   if(accountAction)return <AccountLink action={accountAction} onDone={async reset=>{setAccountAction(null);if(reset)setUser(null);await boot();}}/>;
   if (!user) return <Auth config={config} onLogin={(u,notice) => { if(notice)notify(notice);setUser(u); setView({ cid: u.last_community_id, gid: null }); }} />;
   if(modal?.kind==='delete-account')return <main className="encryption-gate"><Logo/><DeleteAccountDialog config={config} onDeleted={accountDeleted} onClose={()=>setModal(null)}/></main>;
-  return <EncryptionGate key={user.id} user={user} required={!!config.encryptionRequired} onLogout={logout} onDeleteAccount={()=>setModal({kind:'delete-account'})}><FamilyGate user={user} onUser={setUser} onLogout={logout} onDeleteAccount={()=>setModal({kind:'delete-account'})}><div className={`app phase-one ${keyboard.open?'keyboard-open':''} ${tab==='tree'&&group ? 'showing-chat' : ''} ${journey ? 'bird-in-transit' : ''}`} style={{'--nest-entry-duration':`${NEST_MOTION.slide}ms`,'--keyboard-viewport-height':`${keyboard.height}px`,'--keyboard-top':`${keyboard.top}px`}}>
+  return <EncryptionGate key={user.id} user={user} required={!!config.encryptionRequired} onLogout={logout} onDeleteAccount={()=>setModal({kind:'delete-account'})}><FamilyGate user={user} onUser={setUser} onLogout={logout} onDeleteAccount={()=>setModal({kind:'delete-account'})}><NestHistorySync version={version}/><div className={`app phase-one ${keyboard.open?'keyboard-open':''} ${tab==='tree'&&group ? 'showing-chat' : ''} ${journey ? 'bird-in-transit' : ''}`} style={{'--nest-entry-duration':`${NEST_MOTION.slide}ms`,'--keyboard-viewport-height':`${keyboard.height}px`,'--keyboard-top':`${keyboard.top}px`}}>
     <Reporting notify={notify}/><DeviceNotifications user={user} config={config}/>
     <header className="topbar"><div className="brand-zone"><button className="icon-button mobile-only" aria-label="Open navigation" onClick={() => setMobileNav(true)}><Menu size={22} /></button><span className={community&&tab==='tree' ? 'desktop-logo' : ''}><Logo /></span>{community&&tab==='tree' && <div className="mobile-community-switcher" ref={mobileSwitcherRef}>
         <button className="mobile-community-button" aria-label="My Orchard" aria-expanded={mobileSwitcher} onClick={() => setMobileSwitcher(!mobileSwitcher)}><Avatar name={community.name} id={community.avatar_id} size={30} square /><span><strong>{community.name}</strong><small>YOUR TREE</small></span><ChevronDown size={13} /></button>

@@ -6,6 +6,7 @@ import { join, basename, dirname } from 'node:path';
 import multer from 'multer';
 import { rateLimit } from 'express-rate-limit';
 import { canonical, digest, enrollmentPayload, sendPayload, editPayload, readPublic, readPrivate, generateIdentity, validateBackup, validateCiphertext, validateEncryptedFile, verify, FILE_LIMIT } from '../shared/encryption.js';
+import { installNestHistory, nestAudience } from './nest-history.js';
 import { keyVault } from './key-vault.js';
 
 export function installEncryption({app,db,uploadDir,enabled,transaction,refresh,refreshUser,group,membership,visibleCircle,testing}) {
@@ -64,7 +65,7 @@ export function installEncryption({app,db,uploadDir,enabled,transaction,refresh,
   }
   function reader(req,gid) {
     const g=visibleCircle(req.user.id,gid), gm=one('SELECT * FROM group_members WHERE group_id=? AND user_id=?',gid,req.user.id);
-    if(!gm)fail(403,'Join this Nest to read messages sent from that point onward.');
+    if(!gm)fail(403,'Join this Nest to read its messages.');
     return {g,gm};
   }
   function roster(req,gid,messageId=null) {
@@ -78,9 +79,12 @@ export function installEncryption({app,db,uploadDir,enabled,transaction,refresh,
     if(!result.readers.length || result.roster_hash!==hash)fail(409,'Nest membership changed. Refresh and send again.');
     return result;
   }
+  const canRead = (userId,m) => !!one(`SELECT 1 FROM group_members gm JOIN groups g ON g.id=gm.group_id
+    JOIN community_members cm ON cm.community_id=g.community_id AND cm.user_id=gm.user_id
+    JOIN messages m ON m.group_id=g.id WHERE m.id=? AND gm.user_id=? AND ${nestAudience('m','gm')}`,m.id,userId);
   function editRoster(req,message) {
     reader(req,message.group_id);
-    const values=members(message.group_id).readers.filter(u=>u.joined_after<message.id && one('SELECT 1 FROM e2ee_recipients WHERE message_id=? AND user_id=?',message.id,u.id));
+    const values=members(message.group_id).readers.filter(u=>canRead(u.id,message));
     return describeRoster(values);
   }
   function assertEditRoster(req,message,hash) {
@@ -311,7 +315,7 @@ export function installEncryption({app,db,uploadDir,enabled,transaction,refresh,
     });
     cleanup();refresh(original.group_id ? group(original.group_id).community_id : null);res.json({ok:true});
   });
+  const nestHistory=installNestHistory({app,db,enabled,device,identity,ensureManaged,vault,refreshUser});
   return {enabled,ensureManaged,device,reader,roster,members,assertRoster,validateSend,editRoster,assertEditRoster,validateEdit,recordRecipients,identity,cleanup,protection,
-    canRead:(userId,m)=>!!one('SELECT 1 FROM group_members gm JOIN groups g ON g.id=gm.group_id JOIN community_members cm ON cm.community_id=g.community_id AND cm.user_id=gm.user_id WHERE gm.group_id=? AND gm.user_id=? AND gm.joined_after<?',m.group_id,userId,m.id)
-      && !!one('SELECT 1 FROM e2ee_recipients WHERE message_id=? AND user_id=?',m.id,userId)};
+    canRead,nestHistory};
 }

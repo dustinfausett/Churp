@@ -51,7 +51,7 @@ test('production-default E2EE protects contents, recipients, history boundaries 
   const tree=(await f.ok('/communities',alice,'POST',{name:'Encrypted Tree'})).community;
   const invite=(await f.ok('/invitations',alice,'POST',{community_id:tree.id})).path.split('invite=')[1];
   for(const actor of [bob,carol])await f.ok('/invitations/accept',actor,'POST',{token:invite});
-  const nest=(await f.ok(`/communities/${tree.id}/circles`,alice,'POST',{name:'Encrypted Nest'})).group;
+  const nest=(await f.ok(`/communities/${tree.id}/circles`,alice,'POST',{name:'Encrypted Nest',hide_history:true})).group;
   await f.ok(`/groups/${nest.id}/join`,bob,'POST');
   let first,file,secret,plainFile;
   await t.test('plaintext writes, unapproved devices and unencrypted backups are rejected',async()=>{
@@ -96,7 +96,7 @@ test('production-default E2EE protects contents, recipients, history boundaries 
     assert.equal((await f.req(`/groups/${nest.id}/messages`,bob)).status,403);assert.equal((await f.req(`/files/${file.id}`,bob)).status,404);
   });
   await t.test('admin rights do not reveal old chat contents; recipient sets and signatures cannot be forged',async()=>{
-    const privateNest=(await f.ok(`/communities/${tree.id}/circles`,alice,'POST',{name:'Private',private:true})).group;
+    const privateNest=(await f.ok(`/communities/${tree.id}/circles`,alice,'POST',{name:'Private',hide_history:true,private:true})).group;
     await f.send(alice,privateNest.id,'Only Alice');await f.ok(`/communities/${tree.id}/members/${carol.id}`,alice,'PATCH',{role:'admin'});
     assert.equal((await f.req(`/groups/${privateNest.id}/messages`,carol)).status,403);
     await f.ok(`/groups/${privateNest.id}/join`,carol,'POST');assert.deepEqual((await f.ok(`/groups/${privateNest.id}/messages`,carol)).messages,[]);
@@ -129,7 +129,7 @@ test('existing history migrates on authorized browsers without granting later jo
   const tree=(await f.ok('/communities',alice,'POST',{name:'Old Tree'})).community;
   const invitation=(await f.ok('/invitations',alice,'POST',{community_id:tree.id})).path.split('invite=')[1];
   for(const a of [bob,late])await f.ok('/invitations/accept',a,'POST',{token:invitation});
-  const nest=(await f.ok(`/communities/${tree.id}/circles`,alice,'POST',{name:'Old history'})).group;await f.ok(`/groups/${nest.id}/join`,bob,'POST');
+  const nest=(await f.ok(`/communities/${tree.id}/circles`,alice,'POST',{name:'Old history',hide_history:true})).group;await f.ok(`/groups/${nest.id}/join`,bob,'POST');
   const plain=`LEGACY-SECRET-${randomUUID()}`,filePlain=enc.bytes(`OLD-FILE-${randomUUID()}`),form=new FormData();form.append('file',new Blob([filePlain]),'old-secret-name.txt');
   const oldFile=(await f.ok('/uploads',alice,'POST',form)).file,oldDisk=f.runtime.db.prepare('SELECT disk_name FROM files WHERE id=?').get(oldFile.id).disk_name;
   const id=(await f.ok(`/groups/${nest.id}/messages`,alice,'POST',{body:plain,files:[oldFile.id]})).id;
@@ -223,7 +223,7 @@ test('hybrid custody restores standard accounts and derives shields from all joi
 test('shared library finds encrypted older attachments and polls with pagination and membership history boundaries',async t=>{
   const f=await fixture(t),owner=await f.enroll(await f.register('library_owner')),member=await f.managed(await f.register('library_member')),outsider=await f.managed(await f.register('library_outsider'));
   const tree=(await f.ok('/communities',owner,'POST',{name:'Library Tree'})).community;
-  const nest=(await f.ok(`/communities/${tree.id}/circles`,owner,'POST',{name:'Shared plans'})).group;
+  const nest=(await f.ok(`/communities/${tree.id}/circles`,owner,'POST',{name:'Shared plans',hide_history:true})).group;
   const invite=(await f.ok('/invitations',owner,'POST',{community_id:tree.id})).path.split('invite=')[1];
   await f.ok('/invitations/accept',member,'POST',{token:invite});await f.ok(`/groups/${nest.id}/join`,member,'POST');
   const older=await f.send(owner,nest.id,'Earlier document',[await f.upload(owner,enc.bytes('Private older PDF contents'),'older.pdf')]);
@@ -258,7 +258,7 @@ test('encrypted text edits preserve original history, attachments, author and ti
   const tree=(await f.ok('/communities',alice,'POST',{name:'Editing Tree'})).community;
   const invite=(await f.ok('/invitations',alice,'POST',{community_id:tree.id})).path.split('invite=')[1];
   await f.ok('/invitations/accept',bob,'POST',{token:invite});
-  const nest=(await f.ok(`/communities/${tree.id}/circles`,alice,'POST',{name:'Messages'})).group;
+  const nest=(await f.ok(`/communities/${tree.id}/circles`,alice,'POST',{name:'Messages',hide_history:true})).group;
   await f.ok(`/groups/${nest.id}/join`,bob,'POST');
   const file=await f.upload(alice,enc.bytes('Keep this attachment'),'unchanged.txt');
   const sent=await f.send(alice,nest.id,'Original typo',[file]);
@@ -333,4 +333,89 @@ test('self-managed accounts can entrust keys to Churp and opt in again with a ne
   assert.equal((await f.req('/e2ee/churp-managed',alice,'POST',body)).status,400);
   await enc.verify(second.toPublic().armor(),'self-managed-transition',changed.payload,changed.body.signature);
   await f.restart();assert.equal((await f.ok('/e2ee/account',alice)).identity.fingerprint,alice.privateKey.getFingerprint());assert.deepEqual(f.runtime.db.prepare('PRAGMA foreign_key_check').all(),[]);
+});
+
+test('Nest admins can share earlier chat with current and future members', async t => {
+  const f = await fixture(t);
+  const owner = await f.managed(await f.register('history_owner'));
+  const member = await f.managed(await f.register('history_member'));
+  const newcomer = await f.managed(await f.register('history_newcomer'));
+  const tree = (await f.ok('/communities',owner,'POST',{name:'History Tree'})).community;
+  const invite = (await f.ok('/invitations',owner,'POST',{community_id:tree.id})).path.split('invite=')[1];
+  for (const actor of [member,newcomer]) await f.ok('/invitations/accept',actor,'POST',{token:invite});
+  const create = async body => (await f.ok(`/communities/${tree.id}/circles`,owner,'POST',body)).group;
+  const visible = await create({name:'Visible by default'});
+  assert.equal(visible.hide_history,0);
+  const prior = await f.send(owner,visible.id,'History by default');
+  assert.equal((await f.req(`/groups/${visible.id}/messages`,member)).status,403);
+  await f.ok(`/groups/${visible.id}/join`,member,'POST');
+  const first = (await f.ok(`/groups/${visible.id}/messages`,member)).messages[0];
+  assert.equal(first.id,prior.id);
+  assert.equal((await enc.open(member.privateKey,owner.publicKey,first.ciphertext)).body,'History by default');
+  assert.equal((await f.ok('/notifications',member)).notifications.length,0);
+
+  const hidden = await create({name:'Hidden history',hide_history:true});
+  const plainFile = enc.bytes('Shared with history');
+  const file = await f.upload(owner,plainFile);
+  const root = await f.send(owner,hidden.id,'Before joining',[file]);
+  const reply = await f.send(owner,hidden.id,'Earlier reply',[],root.id);
+  const path = `/groups/${hidden.id}`;
+  await f.ok(`${path}/join`,member,'POST');
+  assert.deepEqual((await f.ok(`${path}/messages`,member)).messages,[]);
+  assert.equal((await f.req(`/files/${file.id}`,member)).status,404);
+  assert.equal((await f.req(path,member,'PATCH',{hide_history:false})).status,403);
+  await f.ok(path,owner,'PATCH',{hide_history:false});
+  const shared = (await f.ok(`${path}/threads/${root.id}`,member)).messages;
+  assert.deepEqual(shared.map(m=>m.id),[root.id,reply.id]);
+  assert.equal((await enc.open(member.privateKey,owner.publicKey,shared[0].ciphertext)).body,'Before joining');
+  assert.deepEqual(await enc.decryptFile((await f.req(`/files/${file.id}`,member)).data,file),plainFile);
+
+  await f.ok(path,owner,'PATCH',{hide_history:true});
+  await f.ok(`${path}/join`,newcomer,'POST');
+  assert.deepEqual((await f.ok(`${path}/shared`,newcomer)).messages,[]);
+  const ownerMessage = (await f.ok(`${path}/messages`,owner)).messages[0];
+  await f.ok(`/messages/${root.id}/content`,owner,'PUT',await f.prepareEdit(owner,ownerMessage,'Corrected earlier chat',[file]));
+  await f.restart();
+  const edited = (await f.ok(`${path}/messages`,member)).messages[0];
+  assert.equal((await enc.open(member.privateKey,owner.publicKey,edited.ciphertext)).body,'Corrected earlier chat');
+  await f.ok(`${path}/join`,member,'DELETE');
+  await f.ok(`${path}/join`,member,'POST');
+  assert.deepEqual((await f.ok(`${path}/messages`,member)).messages,[]);
+  assert.equal((await f.req(`/files/${file.id}`,member)).status,404);
+  assert.deepEqual(f.runtime.db.prepare('PRAGMA foreign_key_check').all(),[]);
+});
+
+test('an approved device shares self-managed chat with the current membership only', async t => {
+  const f = await fixture(t);
+  const owner = await f.enroll(await f.register('offline_owner'));
+  const member = await f.enroll(await f.register('offline_member'));
+  const tree = (await f.ok('/communities',owner,'POST',{name:'Self-managed history'})).community;
+  const invite = (await f.ok('/invitations',owner,'POST',{community_id:tree.id})).path.split('invite=')[1];
+  await f.ok('/invitations/accept',member,'POST',{token:invite});
+  const nest = (await f.ok(`/communities/${tree.id}/circles`,owner,'POST',{name:'Private chat',hide_history:true})).group;
+  const path = `/groups/${nest.id}`, stored = await f.send(owner,nest.id,'Signed earlier chat');
+  await f.ok(`${path}/join`,member,'POST');
+  assert.deepEqual((await f.ok(`${path}/messages`,member)).messages,[]);
+  assert.deepEqual((await f.ok('/nest-history',member)).tasks,[]);
+  assert.equal((await f.req('/nest-history',{...owner,deviceId:null})).status,403);
+  assert.deepEqual((await f.ok('/nest-history',owner)).tasks,[]);
+  await f.ok(path,owner,'PATCH',{hide_history:false});
+  const task = (await f.ok('/nest-history',owner)).tasks[0];
+  assert.equal(task.recipient_id,member.id);
+  assert.equal(task.id,stored.id);
+  const ciphertext = await enc.rewrap([owner.privateKey],task.public_key,task.ciphertext);
+  const payload = {messageId:task.id,recipientId:member.id,joinToken:task.join_token,editVersion:task.edit_version,
+    fingerprint:task.fingerprint,cipherHash:await enc.digest(ciphertext)};
+  const share = {...payload,ciphertext,signature:await enc.sign(owner.privateKey,'nest-history',payload)};
+  await f.ok(path,owner,'PATCH',{hide_history:true});
+  assert.equal((await f.req(`/nest-history/${task.id}`,owner,'POST',{...share,signature:'invalid'})).status,400);
+  assert.equal((await f.ok(`/nest-history/${task.id}`,owner,'POST',share)).shared,true);
+  const earlier = (await f.ok(`${path}/messages`,member)).messages[0];
+  assert.equal(earlier.self_encrypted,1);
+  assert.equal((await enc.open(member.privateKey,owner.publicKey,earlier.ciphertext)).body,'Signed earlier chat');
+  assert.ok(!f.runtime.db.prepare('SELECT 1 FROM e2ee_recipients WHERE message_id=? AND user_id=?').get(task.id,member.id));
+  await f.ok(`${path}/join`,member,'DELETE');
+  await f.ok(`${path}/join`,member,'POST');
+  assert.equal((await f.ok(`/nest-history/${task.id}`,owner,'POST',share)).shared,false);
+  assert.deepEqual((await f.ok(`${path}/messages`,member)).messages,[]);
 });

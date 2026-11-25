@@ -33,8 +33,8 @@ test('legacy hierarchy migration retains conversations, invitations, files, sess
       assert.equal(backup.prepare('SELECT body FROM messages WHERE id=3').get().body,'Keep this message');
       assert.ok(!backup.prepare('PRAGMA table_info(groups)').all().some(c=>c.name==='community_id'));
     } finally { backup.close(); }
-    assert.deepEqual({ ...db.prepare('SELECT * FROM groups').get() }, { id:'g', community_id:'c', subcommunity_id:'s', name:'Existing conversation', description:'Chat description', avatar_id:null, private:1, admin_only:1 });
-    assert.deepEqual({ ...db.prepare('SELECT * FROM group_members').get() }, { group_id:'g', user_id:'u', muted:1, last_read:3, pin_position:null, marked_unread:0, joined_after:0, join_token:null });
+    assert.deepEqual({ ...db.prepare('SELECT * FROM groups').get() }, { id:'g', community_id:'c', subcommunity_id:'s', name:'Existing conversation', description:'Chat description', avatar_id:null, private:1, admin_only:1, hide_history:1 });
+    assert.deepEqual({ ...db.prepare('SELECT * FROM group_members').get() }, { group_id:'g', user_id:'u', muted:1, last_read:3, pin_position:null, marked_unread:0, joined_after:0, join_token:null, share_history:0 });
     assert.equal(db.prepare('SELECT reply_to FROM messages WHERE id=4').get().reply_to,3);
     for (const table of ['sessions','invitations','scoped_admins','message_files','notifications','files']) assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n,1);
     assert.equal(db.prepare('SELECT urgent FROM messages WHERE id=3').get().urgent,0);
